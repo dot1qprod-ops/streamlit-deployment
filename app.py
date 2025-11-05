@@ -1,5 +1,4 @@
 import streamlit as st
-import whisper
 from transformers import pipeline
 import numpy as np
 import librosa
@@ -21,7 +20,11 @@ st.caption("Automated transcription and translation system for Chichewa audio")
 def load_models():
     """Load the Whisper transcription model and NLLB translation model"""
     with st.spinner("Loading models..."):
-        whisper_model = whisper.load_model("zerolat3ncy/whisper-ch-chk500")
+        whisper_model = pipeline(
+            "automatic-speech-recognition",
+            model="zerolat3ncy/whisper-ch-chk500",
+            device="cpu"
+        )
         
         translation_model = pipeline(
             "translation", 
@@ -48,7 +51,7 @@ def convert_audio(audio_bytes):
 
 def transcribe(model, audio_path):
     """Transcribe Chichewa audio using Whisper"""
-    result = model.transcribe(audio_path, language="ny")
+    result = model(audio_path)
     return result["text"].strip()
 
 def translate(model, text):
