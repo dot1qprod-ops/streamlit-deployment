@@ -59,11 +59,11 @@ def convert_audio(audio_bytes):
 def transcribe(model, audio_path):
     """Transcribe Chichewa audio using Whisper"""
     try:
-        # Load audio using librosa (doesn't require ffmpeg in the same way)
+        # Load audio using librosa at 16kHz (Whisper's expected sampling rate)
         audio_array, sampling_rate = librosa.load(audio_path, sr=16000)
         
         # Pass the audio array directly to the pipeline
-        result = model(audio_array, sampling_rate=sampling_rate)
+        result = model(audio_array)
         
         if isinstance(result, dict):
             return result["text"].strip()
