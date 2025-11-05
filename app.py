@@ -197,7 +197,13 @@ if audio_data is not None:
             
             with col_a:
                 st.subheader("Chichewa Transcription")
-                st.text_area("", value=transcription if transcription else "No transcription generated", height=150, label_visibility="collapsed")
+                st.text_area(
+                    "Transcription Output",
+                    value=transcription if transcription else "No transcription generated",
+                    height=150,
+                    label_visibility="collapsed",
+                    key="transcription_output"
+                )
                 
                 if reference_chichewa.strip() and transcription:
                     accuracy = calculate_accuracy(reference_chichewa, transcription)
@@ -206,7 +212,13 @@ if audio_data is not None:
             
             with col_b:
                 st.subheader("English Translation")
-                st.text_area("", value=translation if translation else "No translation generated", height=150, label_visibility="collapsed")
+                st.text_area(
+                    "Translation Output",
+                    value=translation if translation else "No translation generated",
+                    height=150,
+                    label_visibility="collapsed",
+                    key="translation_output"
+                )
                 
                 if reference_english.strip() and translation:
                     accuracy = calculate_accuracy(reference_english, translation)
