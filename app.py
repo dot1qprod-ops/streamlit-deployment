@@ -28,7 +28,9 @@ def load_models():
         translation_model = pipeline(
             "translation",
             model="zerolat3ncy/nllb-financial-nya-en",
-            device=-1
+            device=-1,
+            src_lang="nya_Latn",
+            tgt_lang="eng_Latn"
         )
         
     return whisper_model, translation_model
