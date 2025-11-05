@@ -1,5 +1,5 @@
 import streamlit as st
-from transformers import pipeline
+from transformers import pipeline, WhisperProcessor, WhisperForConditionalGeneration
 import numpy as np
 import librosa
 from tempfile import NamedTemporaryFile
@@ -20,16 +20,23 @@ st.caption("Automated transcription and translation system for Chichewa audio")
 def load_models():
     """Load the Whisper transcription model and NLLB translation model"""
     with st.spinner("Loading models..."):
+        # Load Whisper model and processor separately
+        processor = WhisperProcessor.from_pretrained("openai/whisper-medium")
+        whisper_model_raw = WhisperForConditionalGeneration.from_pretrained("zerolat3ncy/whisper-ch-chk500")
+        
+        # Create pipeline with explicit processor
         whisper_model = pipeline(
             "automatic-speech-recognition",
-            model="zerolat3ncy/whisper-ch-chk500",
-            device=-1  # -1 for CPU, 0 for GPU
+            model=whisper_model_raw,
+            tokenizer=processor.tokenizer,
+            feature_extractor=processor.feature_extractor,
+            device=-1
         )
         
         translation_model = pipeline(
             "translation", 
             model="zerolat3ncy/nllb-financial-nya-en", 
-            device=-1  # -1 for CPU, 0 for GPU
+            device=-1
         )
         
     return whisper_model, translation_model
