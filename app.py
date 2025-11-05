@@ -59,11 +59,11 @@ def convert_audio(audio_bytes):
 def transcribe(model, audio_path):
     """Transcribe Chichewa audio using Whisper"""
     try:
-        # Load audio using librosa at 16kHz (Whisper's expected sampling rate)
+        # Load audio using librosa (doesn't require ffmpeg in the same way)
         audio_array, sampling_rate = librosa.load(audio_path, sr=16000)
         
         # Pass the audio array directly to the pipeline
-        result = model(audio_array)
+        result = model(audio_array, sampling_rate=sampling_rate)
         
         if isinstance(result, dict):
             return result["text"].strip()
@@ -197,13 +197,7 @@ if audio_data is not None:
             
             with col_a:
                 st.subheader("Chichewa Transcription")
-                st.text_area(
-                    "Transcription Output",
-                    value=transcription if transcription else "No transcription generated",
-                    height=150,
-                    label_visibility="collapsed",
-                    key="transcription_output"
-                )
+                st.text_area("", value=transcription if transcription else "No transcription generated", height=150, label_visibility="collapsed")
                 
                 if reference_chichewa.strip() and transcription:
                     accuracy = calculate_accuracy(reference_chichewa, transcription)
@@ -212,13 +206,7 @@ if audio_data is not None:
             
             with col_b:
                 st.subheader("English Translation")
-                st.text_area(
-                    "Translation Output",
-                    value=translation if translation else "No translation generated",
-                    height=150,
-                    label_visibility="collapsed",
-                    key="translation_output"
-                )
+                st.text_area("", value=translation if translation else "No translation generated", height=150, label_visibility="collapsed")
                 
                 if reference_english.strip() and translation:
                     accuracy = calculate_accuracy(reference_english, translation)
