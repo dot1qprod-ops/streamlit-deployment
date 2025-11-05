@@ -23,13 +23,13 @@ def load_models():
         whisper_model = pipeline(
             "automatic-speech-recognition",
             model="zerolat3ncy/whisper-ch-chk500",
-            device="cpu"
+            device=-1  # -1 for CPU, 0 for GPU
         )
         
         translation_model = pipeline(
             "translation", 
             model="zerolat3ncy/nllb-financial-nya-en", 
-            device="cpu"
+            device=-1  # -1 for CPU, 0 for GPU
         )
         
     return whisper_model, translation_model
@@ -51,8 +51,17 @@ def convert_audio(audio_bytes):
 
 def transcribe(model, audio_path):
     """Transcribe Chichewa audio using Whisper"""
-    result = model(audio_path)
-    return result["text"].strip()
+    try:
+        result = model(audio_path)
+        if isinstance(result, dict):
+            return result["text"].strip()
+        elif isinstance(result, list) and len(result) > 0:
+            return result[0]["text"].strip()
+        else:
+            return str(result).strip()
+    except Exception as e:
+        st.error(f"Transcription error: {str(e)}")
+        return ""
 
 def translate(model, text):
     """Translate Chichewa text to English using NLLB"""
@@ -88,6 +97,8 @@ try:
     st.success("Models loaded successfully")
 except Exception as e:
     st.error(f"Error loading models: {str(e)}")
+    import traceback
+    st.code(traceback.format_exc())
     st.stop()
 
 st.divider()
