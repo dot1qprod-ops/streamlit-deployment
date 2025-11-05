@@ -1,9 +1,10 @@
 import streamlit as st
-from transformers import WhisperProcessor, WhisperForConditionalGeneration, AutoTokenizer, AutoModelForSeq2SeqLM
+from faster_whisper import WhisperModel
+from transformers import pipeline
 import librosa
-import torch
 from tempfile import NamedTemporaryFile
 import os
+import soundfile as sf
 
 st.set_page_config(
     page_title="Chichewa ASR & Translation",
@@ -12,94 +13,78 @@ st.set_page_config(
 )
 
 st.title("Chichewa Speech Recognition and Translation")
-st.caption("Audio → Whisper ASR → NLLB Translation → English Text")
+st.caption("Audio → Faster Whisper ASR → NLLB Translation → English Text")
 
 @st.cache_resource
 def load_models():
-    """Load Whisper ASR and NLLB translation models"""
+    """Load Faster Whisper and NLLB translation models"""
     with st.spinner("Loading models..."):
-        # Load Whisper processor from base model
-        processor = WhisperProcessor.from_pretrained(
-            "openai/whisper-small",
-            language="ny",
-            task="transcribe"
+        whisper_model = WhisperModel(
+            "zerolat3ncy/faster-whisper-medium-chichewa",
+            device="cpu",
+            compute_type="int8"
         )
         
-        # Load fine-tuned Whisper model
-        whisper_model = WhisperForConditionalGeneration.from_pretrained(
-            "zerolat3ncy/whisper-ch-chk500"
+        translation_model = pipeline(
+            "translation",
+            model="zerolat3ncy/nllb-financial-nya-en",
+            device=-1
         )
         
-        # Load NLLB tokenizer and model
-        nllb_tokenizer = AutoTokenizer.from_pretrained(
-            "zerolat3ncy/nllb-financial-nya-en",
-            src_lang="nya_Latn",
-            tgt_lang="eng_Latn"
-        )
-        
-        nllb_model = AutoModelForSeq2SeqLM.from_pretrained(
-            "zerolat3ncy/nllb-financial-nya-en"
-        )
-        
-    return processor, whisper_model, nllb_tokenizer, nllb_model
+    return whisper_model, translation_model
 
-def transcribe_audio(processor, model, audio_path):
-    """Transcribe Chichewa audio to text using Whisper"""
+def convert_audio(audio_bytes):
+    """Convert audio to 16kHz WAV format"""
+    with NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+        tmp_file.write(audio_bytes)
+        temp_path = tmp_file.name
+    
+    audio_data, sr = librosa.load(temp_path, sr=16000)
+    
+    with NamedTemporaryFile(delete=False, suffix=".wav") as converted_file:
+        sf.write(converted_file.name, audio_data, sr, format='WAV')
+        converted_path = converted_file.name
+    
+    os.unlink(temp_path)
+    return converted_path
+
+def transcribe_audio(model, audio_path):
+    """Transcribe Chichewa audio using Faster Whisper"""
     try:
-        audio, sr = librosa.load(audio_path, sr=16000)
+        segments, info = model.transcribe(
+            audio_path,
+            language="ny",
+            beam_size=5,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=500)
+        )
         
-        input_features = processor(
-            audio,
-            return_tensors="pt",
-            sampling_rate=sr
-        ).input_features
+        transcription = ""
+        for segment in segments:
+            transcription += segment.text + " "
         
-        with torch.no_grad():
-            generated_ids = model.generate(inputs=input_features)
-        
-        transcription = processor.batch_decode(
-            generated_ids,
-            skip_special_tokens=True
-        )[0]
-        
-        return transcription
+        return transcription.strip()
     except Exception as e:
         st.error(f"Transcription error: {str(e)}")
         return ""
 
-def translate_text(tokenizer, model, chichewa_text):
+def translate_text(model, text):
     """Translate Chichewa text to English using NLLB"""
-    if not chichewa_text or chichewa_text.strip() == "":
+    if not text or text.strip() == "":
         return ""
     
+    if len(text.split()) > 200:
+        text = " ".join(text.split()[:200])
+    
     try:
-        inputs = tokenizer(
-            chichewa_text,
-            return_tensors='pt',
-            max_length=256,
-            truncation=True
-        )
-        
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_length=256,
-                num_beams=5,
-                early_stopping=True
-            )
-        
-        translation = tokenizer.decode(
-            outputs[0],
-            skip_special_tokens=True
-        )
-        
-        return translation
+        result = model(text)
+        return result[0]['translation_text']
     except Exception as e:
         st.error(f"Translation error: {str(e)}")
         return ""
 
 def calculate_accuracy(reference, hypothesis):
-    """Calculate word-level accuracy between reference and hypothesis"""
+    """Calculate word-level accuracy"""
     if not reference or not hypothesis:
         return None
     
@@ -113,7 +98,7 @@ def calculate_accuracy(reference, hypothesis):
 
 # Load models
 try:
-    processor, whisper_model, nllb_tokenizer, nllb_model = load_models()
+    whisper_model, translation_model = load_models()
     st.success("Models loaded successfully")
 except Exception as e:
     st.error(f"Error loading models: {str(e)}")
@@ -123,16 +108,13 @@ except Exception as e:
 
 st.divider()
 
-# Input method selection
+# Input selection
 input_method = st.radio("Input Method", ["Upload Audio File", "Record Audio"], horizontal=True)
 
 audio_data = None
 
 if input_method == "Upload Audio File":
-    uploaded_file = st.file_uploader(
-        "Select audio file", 
-        type=['wav', 'mp3', 'ogg', 'flac', 'm4a']
-    )
+    uploaded_file = st.file_uploader("Select audio file", type=['wav', 'mp3', 'ogg', 'flac', 'm4a'])
     if uploaded_file is not None:
         st.audio(uploaded_file)
         audio_data = uploaded_file
@@ -142,24 +124,18 @@ else:
         st.audio(recorded_audio)
         audio_data = recorded_audio
 
-# Optional reference text inputs
+# Reference text
 with st.expander("Reference Text (Optional)"):
     st.caption("Provide reference text to calculate accuracy metrics")
     col1, col2 = st.columns(2)
     
     with col1:
-        reference_chichewa = st.text_area(
-            "Chichewa Reference", 
-            placeholder="Enter correct Chichewa transcription"
-        )
+        reference_chichewa = st.text_area("Chichewa Reference", placeholder="Enter correct Chichewa transcription")
     
     with col2:
-        reference_english = st.text_area(
-            "English Reference", 
-            placeholder="Enter correct English translation"
-        )
+        reference_english = st.text_area("English Reference", placeholder="Enter correct English translation")
 
-# Process button
+# Process audio
 if audio_data is not None:
     if st.button("Process Audio", type="primary", use_container_width=True):
         try:
@@ -178,13 +154,21 @@ if audio_data is not None:
                 tmp_file.write(audio_bytes)
                 tmp_path = tmp_file.name
             
+            if input_method == "Record Audio":
+                status_text.text("Converting audio format...")
+                progress_bar.progress(20)
+                converted_path = convert_audio(audio_bytes)
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                tmp_path = converted_path
+            
             status_text.text("Transcribing audio...")
             progress_bar.progress(40)
-            transcription = transcribe_audio(processor, whisper_model, tmp_path)
+            transcription = transcribe_audio(whisper_model, tmp_path)
             
             status_text.text("Translating to English...")
             progress_bar.progress(70)
-            translation = translate_text(nllb_tokenizer, nllb_model, transcription)
+            translation = translate_text(translation_model, transcription)
             
             progress_bar.progress(100)
             status_text.empty()
@@ -230,18 +214,18 @@ if audio_data is not None:
             
             with col_dl1:
                 st.download_button(
-                    "Download Transcription", 
-                    transcription, 
-                    "transcription.txt", 
+                    "Download Transcription",
+                    transcription,
+                    "transcription.txt",
                     "text/plain",
                     use_container_width=True
                 )
             
             with col_dl2:
                 st.download_button(
-                    "Download Translation", 
-                    translation, 
-                    "translation.txt", 
+                    "Download Translation",
+                    translation,
+                    "translation.txt",
                     "text/plain",
                     use_container_width=True
                 )
