@@ -21,7 +21,7 @@ def load_models():
     """Load the Whisper transcription model and NLLB translation model"""
     with st.spinner("Loading models..."):
         # Load Whisper model and processor separately
-        processor = WhisperProcessor.from_pretrained("openai/whisper-medium")
+        processor = WhisperProcessor.from_pretrained("openai/whisper-small")
         whisper_model_raw = WhisperForConditionalGeneration.from_pretrained("zerolat3ncy/whisper-ch-chk500")
         
         # Create pipeline with explicit processor
@@ -59,7 +59,12 @@ def convert_audio(audio_bytes):
 def transcribe(model, audio_path):
     """Transcribe Chichewa audio using Whisper"""
     try:
-        result = model(audio_path)
+        # Load audio using librosa (doesn't require ffmpeg in the same way)
+        audio_array, sampling_rate = librosa.load(audio_path, sr=16000)
+        
+        # Pass the audio array directly to the pipeline
+        result = model(audio_array, sampling_rate=sampling_rate)
+        
         if isinstance(result, dict):
             return result["text"].strip()
         elif isinstance(result, list) and len(result) > 0:
