@@ -1,11 +1,9 @@
 import streamlit as st
-from transformers import pipeline, WhisperProcessor, WhisperForConditionalGeneration
-import numpy as np
+from transformers import WhisperProcessor, WhisperForConditionalGeneration, AutoTokenizer, AutoModelForSeq2SeqLM
 import librosa
+import torch
 from tempfile import NamedTemporaryFile
 import os
-import soundfile as sf
-import torch
 
 st.set_page_config(
     page_title="Chichewa ASR & Translation",
@@ -14,75 +12,88 @@ st.set_page_config(
 )
 
 st.title("Chichewa Speech Recognition and Translation")
-st.caption("Automated transcription and translation system for Chichewa audio")
+st.caption("Audio → Whisper ASR → NLLB Translation → English Text")
 
 @st.cache_resource
 def load_models():
-    """Load the Whisper transcription model and NLLB translation model"""
+    """Load Whisper ASR and NLLB translation models"""
     with st.spinner("Loading models..."):
-        # Load Whisper model and processor separately
-        processor = WhisperProcessor.from_pretrained("openai/whisper-small")
-        whisper_model_raw = WhisperForConditionalGeneration.from_pretrained("zerolat3ncy/whisper-ch-chk500")
-        
-        # Create pipeline with explicit processor
-        whisper_model = pipeline(
-            "automatic-speech-recognition",
-            model=whisper_model_raw,
-            tokenizer=processor.tokenizer,
-            feature_extractor=processor.feature_extractor,
-            device=-1
+        # Load Whisper processor from base model
+        processor = WhisperProcessor.from_pretrained(
+            "openai/whisper-small",
+            language="ny",
+            task="transcribe"
         )
         
-        translation_model = pipeline(
-            "translation", 
-            model="zerolat3ncy/nllb-financial-nya-en", 
-            device=-1
+        # Load fine-tuned Whisper model
+        whisper_model = WhisperForConditionalGeneration.from_pretrained(
+            "zerolat3ncy/whisper-ch-chk500"
         )
         
-    return whisper_model, translation_model
+        # Load NLLB tokenizer and model
+        nllb_tokenizer = AutoTokenizer.from_pretrained(
+            "zerolat3ncy/nllb-financial-nya-en",
+            src_lang="nya_Latn",
+            tgt_lang="eng_Latn"
+        )
+        
+        nllb_model = AutoModelForSeq2SeqLM.from_pretrained(
+            "zerolat3ncy/nllb-financial-nya-en"
+        )
+        
+    return processor, whisper_model, nllb_tokenizer, nllb_model
 
-def convert_audio(audio_bytes):
-    """Convert audio to 16kHz WAV format for Whisper"""
-    with NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-        tmp_file.write(audio_bytes)
-        temp_path = tmp_file.name
-    
-    audio_data, sr = librosa.load(temp_path, sr=16000)
-    
-    with NamedTemporaryFile(delete=False, suffix=".wav") as converted_file:
-        sf.write(converted_file.name, audio_data, sr, format='WAV')
-        converted_path = converted_file.name
-    
-    os.unlink(temp_path)
-    return converted_path
-
-def transcribe(model, audio_path):
-    """Transcribe Chichewa audio using Whisper"""
+def transcribe_audio(processor, model, audio_path):
+    """Transcribe Chichewa audio to text using Whisper"""
     try:
-        audio_array, _ = librosa.load(audio_path, sr=16000)
-        result = model(audio_array)
+        audio, sr = librosa.load(audio_path, sr=16000)
         
-        if isinstance(result, dict):
-            return result["text"].strip()
-        elif isinstance(result, list) and len(result) > 0:
-            return result[0]["text"].strip()
-        else:
-            return str(result).strip()
+        input_features = processor(
+            audio,
+            return_tensors="pt",
+            sampling_rate=sr
+        ).input_features
+        
+        with torch.no_grad():
+            generated_ids = model.generate(inputs=input_features)
+        
+        transcription = processor.batch_decode(
+            generated_ids,
+            skip_special_tokens=True
+        )[0]
+        
+        return transcription
     except Exception as e:
         st.error(f"Transcription error: {str(e)}")
         return ""
 
-def translate(model, text):
+def translate_text(tokenizer, model, chichewa_text):
     """Translate Chichewa text to English using NLLB"""
-    if not text or text.strip() == "":
+    if not chichewa_text or chichewa_text.strip() == "":
         return ""
     
-    if len(text.split()) > 200:
-        text = " ".join(text.split()[:200])
-    
     try:
-        result = model(text)
-        return result[0]['translation_text']
+        inputs = tokenizer(
+            chichewa_text,
+            return_tensors='pt',
+            max_length=256,
+            truncation=True
+        )
+        
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_length=256,
+                num_beams=5,
+                early_stopping=True
+            )
+        
+        translation = tokenizer.decode(
+            outputs[0],
+            skip_special_tokens=True
+        )
+        
+        return translation
     except Exception as e:
         st.error(f"Translation error: {str(e)}")
         return ""
@@ -102,7 +113,7 @@ def calculate_accuracy(reference, hypothesis):
 
 # Load models
 try:
-    whisper_model, translation_model = load_models()
+    processor, whisper_model, nllb_tokenizer, nllb_model = load_models()
     st.success("Models loaded successfully")
 except Exception as e:
     st.error(f"Error loading models: {str(e)}")
@@ -167,21 +178,13 @@ if audio_data is not None:
                 tmp_file.write(audio_bytes)
                 tmp_path = tmp_file.name
             
-            if input_method == "Record Audio":
-                status_text.text("Converting audio format...")
-                progress_bar.progress(20)
-                converted_path = convert_audio(audio_bytes)
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-                tmp_path = converted_path
-            
             status_text.text("Transcribing audio...")
             progress_bar.progress(40)
-            transcription = transcribe(whisper_model, tmp_path)
+            transcription = transcribe_audio(processor, whisper_model, tmp_path)
             
             status_text.text("Translating to English...")
             progress_bar.progress(70)
-            translation = translate(translation_model, transcription)
+            translation = translate_text(nllb_tokenizer, nllb_model, transcription)
             
             progress_bar.progress(100)
             status_text.empty()
